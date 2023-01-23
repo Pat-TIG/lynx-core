@@ -1,0 +1,5 @@
+[bastion]
+[worker]
+[control]
+[all:vars]
+test=foo
