@@ -1,0 +1,4 @@
+collections:
+  - name: git@github.com:tigera-cs/ansible-tigera-internal.git#tigera/internal
+    scm: git
+#    version: develop
