@@ -1,0 +1,12 @@
+[bastion]
+[control]
+[worker]
+[k8s:children]
+control
+worker
+[control:vars]
+ansible_ssh_extra_args="-o ProxyCommand='ssh -o StrictHostKeyChecking=no -W %h:%p {{ os_user | default('ubuntu') }}@{{ hostvars[groups['bastion'][0]]['public_dns_name'] }}'"
+[worker:vars]
+ansible_ssh_extra_args="-o ProxyCommand='ssh -o StrictHostKeyChecking=no -W %h:%p {{ os_user | default('ubuntu') }}@{{ hostvars[groups['bastion'][0]]['public_dns_name'] }}'"
+[all:vars]
+ansible_user={{ os_user | default('ubuntu') }}

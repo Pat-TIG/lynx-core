@@ -1,0 +1,10 @@
+---
+plugin: amazon.aws.aws_ec2
+regions:
+  - "{{ aws_region }}"
+filters:
+  tag:tigera.ca/environment: "{{ env_name }}"
+keyed_groups:
+  - key: tags['tigera.ca/role'].split(',')
+    prefix: ''
+    separator: ''
