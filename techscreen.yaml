@@ -1,0 +1,333 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Wait for bastion available via nlb
+      wait_for:
+        port: 22
+        host: "{{ env_name }}.{{ dns_domain }}"
+        search_regex: OpenSSH
+        delay: 6
+        timeout: 480
+      connection: local
+      when: state is defined and state == "present"
+
+- hosts: bastion:&{{ env_name }}
+  tasks:
+    - name: Configure Bastion
+      import_role:
+        name: tigera.internal.lynx_bastion
+      when: state is defined and state == "present"
+
+    - name: Install tmate
+      import_role:
+        name: tigera.internal.tmate
+      when: state is defined and state == "present"
+
+    - name: Install packages
+      yum:
+        name:
+          - tcpdump
+          - words
+          - jq
+      become: yes
+      when: state is defined and state == "present"
+
+    - name: Create user jane
+      ansible.builtin.user:
+        name: jane
+        password: "$6$4VS4v.NpTItHnOSr$.krb4HfxUFbn7UJ1GheVefBfEn../Bjx0sNJ6zo9CI.J1ihu/Epkq00iTWE0v8t4/Sxx3o3r/6mRZLubbl0lI1"
+      become: yes
+      when: state is defined and state == "present"
+
+    - name: Create Readme
+      ansible.builtin.copy:
+        dest: /home/tigera/README.txt
+        owner: tigera
+        group: tigera
+        content: |
+          Linux
+          
+          1. Which Linux distribution is this?
+          2. How many CPU cores and how much memory does this machine have?
+          3. Change the hostname to your first name. The change should be persistent across reboots.
+          4. Disable the user jane so that they can’t login using password
+          5. Install the “dig” binary from the distribution repo.
+          6. List all the attached disks.
+          7. Create a filesystem of your choice on the 5GB disk and mount it on /mnt/data. Make sure the mount is persistent across reboots.
+          8. Print all interfaces and routes.
+          9. Change the second interface (eth1) to use 172.16.0.21/24. You can disregard cloud-init.
+          10. What is the word listed before “dog” in the file /usr/share/dict/words? 
+              How many words are there in total in the file /usr/share/dict/words?
+          11. Make a HTTP request to https://api.github.com/repos/kubernetes/kubernetes/releases/latest and print only the version of the latest kubernetes release.
+          12. Start a packet capture in the background that filters the above HTTP request, redirecting standard output to a file. 
+              Redo the HTTP request, stop the packet capture and verify that your file contains the request.
+          13. Which hosts have been configured as ssh shortcuts for this user?
+          14. There is a bash script in ~/silly.sh. It does not work, what do you think it is supposed to do and can you fix it?
+          
+          Kubernetes
+          15. There is a kubeconfig file in ~/kubeconfig Use it to connect to the cluster and list all pods
+          16. What are the pods listed used for?
+          17. The cluster has a number of issues. the alpine pod should be able to access http://google.com
+              Can you fix all of the issues?
+      become: yes
+      when: state is defined and state == "present"
+
+    - name: Create Readme
+      ansible.builtin.copy:
+        dest: /home/tigera/silly.sh
+        owner: tigera
+        group: tigera
+        mode: 0600
+        content: |
+          #!/bin/bas  
+          
+          N1=`date +%s`
+          
+          for i in {0..10..5}
+          do
+            echo $i
+            sleep $(( RANDOM % 2));
+          
+          N2=$(date +%p)
+          
+          echo -n $(($N2 - $N1))
+          echo " seconds"
+      when: state is defined and state == "present"
+      become: yes
+
+- hosts: control:worker:&{{ env_name }}
+  tasks:
+    - name: Authorize bastion ssh key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ hostvars[groups['bastion'] | intersect(groups[env_name]) | first][env_name + '_bastion_ssh_key'] }}"
+      when: state is defined and state == "present"
+
+    - name: Install docker
+      import_role:
+        name: tigera.internal.docker
+      when: state is defined and state == "present"
+
+    - name: Install kubeadm
+      import_role:
+        name: tigera.internal.kubeadm
+      when: state is defined and state == "present"
+
+- hosts: control:&{{ env_name }}
+  tasks:
+    - name: Set join token fact
+      set_fact:
+        join_token: "{{ env_name | md5 }}"
+# TODO: Fix the above
+
+    - name: kubeadm init on first control node
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: init.yaml
+      run_once: True
+      when: state is defined and state == "present"
+
+    - name: Configure kubeconfig
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"
+
+- hosts: control:&{{ env_name }}
+  tasks:
+    - name: Set join token fact
+      set_fact:
+        join_token: "{{ env_name | md5 }}"
+# TODO: Fix the above
+
+    - name: kubeadm join control node
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: join.yaml
+      vars:
+        controlPlane: True
+      when: state is defined and state == "present"
+
+    - name: Configure kubeconfig
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"
+
+- hosts: worker:&{{ env_name }}
+  tasks:
+    - name: Set join token fact
+      set_fact:
+        join_token: "{{ env_name | md5 }}"
+# TODO: Fix the above
+
+    - name: kubeadm join worker node
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: join.yaml
+      when: state is defined and state == "present"
+
+    - name: Configure kubeconfig
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"
+
+- hosts: bastion:&{{ env_name }}
+  tasks:
+    - name: Configure kubeconfig on bastion
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      vars:
+        user: tigera
+      when: state is defined and state == "present"
+
+    - name: Get Tigera Operator Manifest
+      ansible.builtin.get_url:
+        url: https://docs.projectcalico.org/manifests/tigera-operator.yaml
+        dest: /tmp/tigera-operator.yaml
+        mode: '0664'
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"
+ 
+    - name: Deploy Tigera operator
+      community.kubernetes.k8s:
+        state: present
+        src: /tmp/tigera-operator.yaml
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"
+
+    - name: Deploy Tigera Installation CR
+      community.kubernetes.k8s:
+        state: present
+        definition:
+          apiVersion: operator.tigera.io/v1
+          kind: Installation
+          metadata:
+            name: default
+          spec:
+            calicoNetwork:
+              ipPools:
+                - blockSize: 26
+                  cidr: 10.48.0.0/16
+                  encapsulation: None
+                  natOutgoing: Enabled
+                  nodeSelector: all()
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"
+
+    - name: Deploy Tigera APIServer CR
+      community.kubernetes.k8s:
+        state: present
+        definition:
+          apiVersion: operator.tigera.io/v1
+          kind: APIServer
+          metadata:
+            name: default
+          spec: {}
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"
+
+    - name: Deploy Alpine Broken pod
+      community.kubernetes.k8s:
+        state: present
+        definition:
+          apiVersion: apps/v1
+          kind: DaemonSet
+          metadata:
+            name: alpine
+            namespace: default
+            labels:
+              app: alpine
+          spec:
+            selector:
+              matchLabels:
+                app: alpine
+            template:
+              metadata:
+                labels:
+                  app: alpine
+              spec:
+                containers:
+                  - name: alpine
+                    image: alpine:latestt
+                    command:
+                      - /bin/sh
+                      - "-c"
+                      - "sleep 60m"
+                    imagePullPolicy: IfNotPresent
+                    restartPolicy: Always
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"
+
+    - name: Move kubeconfig
+      command: mv /home/tigera/.kube/config /home/tigera/kubeconfig
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"
+
+- hosts: worker:&{{ env_name }}
+  tasks:
+    - name: Stop kubelet
+      systemd:
+        name: kubelet
+        state: stopped
+      become: yes
+      run_once: true
+      when: state is defined and state == "present"
+
+- hosts: worker:&{{ env_name }}
+  tasks:
+    - name: Disable ip forwarding
+      ansible.posix.sysctl:
+        name: net.ipv4.ip_forward
+        value: '0'
+        sysctl_set: yes
+        state: present
+        reload: yes
+      become: yes
+      run_once: true
+      when: state is defined and state == "present"
+
+#    - name: Break DNS
+#      replace:
+#        dest: /etc/resolv.conf
+#        regexp: "^nameserver"
+#        replace: "#nameserver"
+#      become: yes  
+#      when: state is defined and state == "present"
+#
+#    - name: Deploy Ingresscontroller
+#      import_role:
+#        name: tigera.internal.lynx_bastion
+#        tasks_from: ingresscontroller.yaml
+#      vars:
+#        user: tigera
+#      run_once: yes
+#      when: state is defined and state == "present"
+#
+#- hosts: worker:&{{ env_name }}
+#  tasks:
+#    - name: Label worker nodes
+#      community.kubernetes.k8s:
+#        definition:
+#          apiVersion: v1
+#          kind: Node
+#          metadata:
+#            labels:
+#              topology.kubernetes.io/zone: "{{ placement.availability_zone }}"
+#              failure-domain.beta.kubernetes.io/zone: "{{ placement.availability_zone }}"
+#              failure-domain.beta.kubernetes.io/region: "{{ placement.region }}"
+#              node-role.kubernetes.io/worker: ''
+#              alpha.kubernetes.io/provided-node-ip: "{{ private_ip_address }}"
+#            name: "{{ private_dns_name }}"
+#      delegate_to: "{{ env_name }}-bastion"
+#      become: yes
+#      become_user: tigera
+#      when: state is defined and state == "present"

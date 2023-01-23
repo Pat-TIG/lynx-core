@@ -1,0 +1,26 @@
+---
+- name: Deploy/destroy VMs
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Deploy VMs
+      import_role:
+        name: tigera.internal.lynx_ec2
+      when: state is defined and state == "present"
+
+    - name: Create NLB
+      import_role:
+        name: tigera.internal.lynx_ec2_nlb
+      when: state is defined and state == "present"
+
+    - name: Destroy NLB
+      import_role:
+        name: tigera.internal.lynx_ec2_nlb
+      when: state is defined and state == "absent"
+
+    - name: Destroy VMs
+      import_role:
+        name: tigera.internal.lynx_ec2
+      when: state is defined and state == "absent"
+  environment:
+    AWS_DEFAULT_REGION: "{{ aws_region }}"

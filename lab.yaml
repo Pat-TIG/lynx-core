@@ -1,0 +1,136 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Wait for bastion available via nlb
+      wait_for:
+        port: 22
+        host: "{{ env_name }}.{{ dns_domain }}"
+        search_regex: OpenSSH
+        delay: 6
+        timeout: 480
+      connection: local
+      when: state is defined and state == "present"
+
+- hosts: bastion:&{{ env_name }}
+  tasks:
+    - name: Configure Bastion
+      import_role:
+        name: tigera.internal.lynx_bastion
+      when: state is defined and state == "present"
+
+- hosts: control:worker:&{{ env_name }}
+  tasks:
+    - name: Authorize bastion ssh key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ hostvars[groups['bastion'] | intersect(groups[env_name]) | first][env_name + '_bastion_ssh_key'] }}"
+      when: state is defined and state == "present"
+
+    - name: Install docker
+      import_role:
+        name: tigera.internal.docker
+      when: state is defined and state == "present"
+
+    - name: Install kubeadm
+      import_role:
+        name: tigera.internal.kubeadm
+      when: state is defined and state == "present"
+
+- hosts: control:&{{ env_name }}
+  tasks:
+    - name: Set join token fact
+      set_fact:
+        join_token: "{{ env_name | md5 }}"
+# TODO: Fix the above
+
+    - name: kubeadm init on first control node
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: init.yaml
+      run_once: True
+      when: state is defined and state == "present"
+
+    - name: Configure kubeconfig
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"
+
+- hosts: control:&{{ env_name }}
+  tasks:
+    - name: Set join token fact
+      set_fact:
+        join_token: "{{ env_name | md5 }}"
+# TODO: Fix the above
+
+    - name: kubeadm join control node
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: join.yaml
+      vars:
+        controlPlane: True
+      when: state is defined and state == "present"
+
+    - name: Configure kubeconfig
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"
+
+- hosts: worker:&{{ env_name }}
+  tasks:
+    - name: Set join token fact
+      set_fact:
+        join_token: "{{ env_name | md5 }}"
+# TODO: Fix the above
+
+    - name: kubeadm join worker node
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: join.yaml
+      when: state is defined and state == "present"
+
+    - name: Configure kubeconfig
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"
+
+- hosts: bastion:&{{ env_name }}
+  tasks:
+    - name: Configure kubeconfig on bastion
+      import_role:
+        name: tigera.internal.kubeadm
+        tasks_from: kubeconfig.yaml
+      vars:
+        user: tigera
+      when: state is defined and state == "present"
+
+    - name: Deploy Ingresscontroller
+      import_role:
+        name: tigera.internal.lynx_bastion
+        tasks_from: ingresscontroller.yaml
+      vars:
+        user: tigera
+      run_once: yes
+      when: state is defined and state == "present"
+
+- hosts: worker:&{{ env_name }}
+  tasks:
+    - name: Label worker nodes
+      community.kubernetes.k8s:
+        definition:
+          apiVersion: v1
+          kind: Node
+          metadata:
+            labels:
+              topology.kubernetes.io/zone: "{{ placement.availability_zone }}"
+              failure-domain.beta.kubernetes.io/zone: "{{ placement.availability_zone }}"
+              failure-domain.beta.kubernetes.io/region: "{{ placement.region }}"
+              node-role.kubernetes.io/worker: ''
+              alpha.kubernetes.io/provided-node-ip: "{{ private_ip_address }}"
+            name: "{{ private_dns_name }}"
+      delegate_to: "{{ env_name }}-bastion"
+      become: yes
+      become_user: tigera
+      when: state is defined and state == "present"

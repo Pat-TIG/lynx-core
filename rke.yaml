@@ -1,0 +1,44 @@
+---
+- hosts: localhost
+  tasks:
+    - name: Wait for bastion available via nlb
+      wait_for:
+        port: 22
+        host: "{{ env_name }}.{{ dns_domain }}"
+        search_regex: OpenSSH
+        delay: 6
+      connection: local
+      when: state is defined and state == "present"
+
+- hosts: bastion:&{{ env_name }}
+  tasks:
+    - name: Configure Bastion
+      import_role:
+        name: tigera.internal.lynx_bastion
+      when: state is defined and state == "present"
+
+- hosts: control:worker:&{{ env_name }}
+  tasks:
+    - name: Authorize bastion ssh key
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user }}"
+        key: "{{ hostvars[groups['bastion'] | intersect(groups[env_name]) | first]['bastion_ssh_key'] }}"
+      when: state is defined and state == "present"
+
+    - name: Install docker
+      import_role:
+        name: tigera.internal.docker
+      when: state is defined and state == "present"
+
+    - name: Setup rke cluster
+      import_role:
+        name: tigera.internal.rke
+      when: state is defined and state == "present"
+
+- hosts: bastion:&{{ env_name }}
+  tasks:
+    - name: Configure kubeconfig on bastion
+      import_role:
+        name: tigera.internal.rke
+        tasks_from: kubeconfig.yaml
+      when: state is defined and state == "present"

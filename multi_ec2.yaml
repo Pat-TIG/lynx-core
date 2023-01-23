@@ -1,0 +1,46 @@
+---
+- name: Setup dummy group
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Add envs to dummy group
+      add_host:
+        name: "{{ item }}-current"
+        env_name: "{{ item }}"
+        groups: current_group
+      loop: "{{ env_names.split('\n') }}"
+
+- name: Create/Destroy VMs
+  hosts: current_group
+  gather_facts: no
+  tasks:
+    - name: Deploy resources
+      block:
+        - name: Deploy VMs
+          import_role:
+            name: tigera.internal.lynx_ec2
+        - name: Deploy NLB
+          import_role:
+            name: tigera.internal.lynx_ec2_nlb
+      delegate_to: localhost
+      delegate_facts: true
+      when: state is defined and state == "present"
+#      vars:
+#        env_name: "{{ env_name }}"
+
+    - name: Destroy resources
+      block:
+        - name: Destroy NLB
+          import_role:
+            name: tigera.internal.lynx_ec2_nlb
+
+        - name: Destroy VMs
+          import_role:
+            name: tigera.internal.lynx_ec2
+      delegate_to: localhost
+      delegate_facts: true
+      when: state is defined and state == "absent"
+#      vars:
+#        env_name: "{{ env_name }}"
+  environment:
+    AWS_DEFAULT_REGION: "{{ aws_region }}"
